@@ -92,6 +92,9 @@ app.get('/spotify/callback', function(req, res) {
                 var access_token = body.access_token,
                     refresh_token = body.refresh_token;
 
+                spotifyApi.setAccessToken(access_token);
+                spotifyApi.setRefreshToken(refresh_token);
+
                 var options = {
                     url: 'https://api.spotify.com/v1/me',
                     headers: { 'Authorization': 'Bearer ' + access_token },
@@ -100,8 +103,27 @@ app.get('/spotify/callback', function(req, res) {
 
                 // use the access token to access the Spotify Web API
                 request.get(options, function(error, response, body) {
-                    console.log(body);
+                    //console.log(body);
                 });
+
+                var user_id;
+                spotifyApi.getMe()
+                    .then(function(data) {
+                        //console.log('Some information about the authenticated user', data.body);
+                        user_id = data.body.id;
+                    }, function(err) {
+                        console.log('Something went wrong!', err);
+                    });
+
+
+
+                spotifyApi.getUserPlaylists(user_id)
+                    .then(function(data) {
+                        console.log('Retrieved playlists', data.body);
+                    },function(err) {
+                        console.log('Something went wrong!', err);
+                    });
+
 
                 // we can also pass the token to the browser to make requests from there
                 res.redirect('/#' +
