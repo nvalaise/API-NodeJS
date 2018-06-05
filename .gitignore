@@ -59,3 +59,8 @@ typings/
 
 # next.js build output
 .next
+
+
+# WebStorm files
+.idea/*
+.DS_Store
