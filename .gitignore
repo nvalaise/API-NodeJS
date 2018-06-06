@@ -64,3 +64,6 @@ typings/
 # WebStorm files
 .idea/
 .DS_Store
+
+# Docker generated files
+data
