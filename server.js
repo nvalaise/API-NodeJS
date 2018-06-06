@@ -7,6 +7,23 @@ var cookieParser = require('cookie-parser');
 var cors = require('cors');
 var request = require('request');
 
+var MongoClient = require('mongodb').MongoClient;
+
+var url = 'mongodb://mongo:27017';
+
+var app_url = 'https://db3561f6.ngrok.io';
+
+MongoClient.connect(url, function(err, db) {
+    if (err) {
+        console.log(err);
+        db.close();
+    } else {
+        console.log("Database created!");
+    }
+
+});
+
+
 var app = express();
 
 app.use(express.static(__dirname + '/public'))
@@ -16,10 +33,19 @@ app.use(express.static(__dirname + '/public'))
 app.set('views', __dirname + '/views')
     .set('view engine', 'ejs');
 
+
+var facebook_client_id = '197391577565108',
+    facebook_client_secret = '785de91ae300c8286b8013bcd943f847',
+    facebook_redirect_uri = app_url + '/facebook/callback',
+    facebook_fields = 'id email name user_likes',
+    facebook_profile_url;
+
 var spotify_client_id = '6789cda33821496080d428075ff99d95',
     spotify_client_secret = '66ed346771fe492c9ed0323cd59d840a',
-    spotify_redirect_uri = 'https://0461f5c2.ngrok.io/spotify/callback',
-    spotify_scopes = 'user-library-read user-library-modify playlist-read-private playlist-modify-public playlist-modify-private playlist-read-collaborative user-read-recently-played user-top-read user-read-private user-read-email user-read-birthdate user-modify-playback-state user-read-currently-playing user-read-playback-state user-follow-modify user-follow-read';
+    spotify_redirect_uri = app_url + '/spotify/callback',
+    spotify_scopes = 'user-library-read user-library-modify playlist-read-private playlist-modify-public playlist-modify-private playlist-read-collaborative user-read-recently-played user-top-read user-read-private user-read-email user-read-birthdate user-modify-playback-state user-read-currently-playing user-read-playback-state user-follow-modify user-follow-read'
+    spotify_user_id = undefined;
+
 
 var spotifyApi = new SpotifyWebApi({
     clientId: spotify_client_id,
@@ -33,11 +59,8 @@ app.get('/', function(req, res) {
     var error = req.cookies['error'];
     res.clearCookie('error');
 
-
-    console.log(error);
-
     res.setHeader('Content-Type', 'text/html');
-    res.render('home', {error : error});
+    res.render('home', {error : error, spotify: spotify_user_id});
 
 });
 
@@ -76,7 +99,7 @@ app.get('/spotify/callback', function(req, res) {
             url: 'https://accounts.spotify.com/api/token',
             form: {
                 code: code,
-                redirect_uri: 'https://0461f5c2.ngrok.io/spotify/callback',
+                redirect_uri: spotify_redirect_uri,
                 grant_type: 'authorization_code'
             },
             headers: {
@@ -106,18 +129,17 @@ app.get('/spotify/callback', function(req, res) {
                     //console.log(body);
                 });
 
-                var user_id;
                 spotifyApi.getMe()
                     .then(function(data) {
                         //console.log('Some information about the authenticated user', data.body);
-                        user_id = data.body.id;
+                        spotify_user_id = data.body.id;
                     }, function(err) {
                         console.log('Something went wrong!', err);
                     });
 
 
 
-                spotifyApi.getUserPlaylists(user_id)
+                spotifyApi.getUserPlaylists(spotify_user_id)
                     .then(function(data) {
                         console.log('Retrieved playlists', data.body);
                     },function(err) {

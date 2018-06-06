@@ -13,8 +13,14 @@
         </h1>
         <hr>
         <h2>
-            Connexion
+            Spotify
         </h2>
-        <p>Spotify : <a href="/spotify/login">Lien</a></p>
+
+        <% if (typeof spotify == 'undefined') { %>
+            <a href="/spotify/login">Connexion</a>
+        <% } else {  %>
+            <p>Connecté à Spotify</p>
+        <% } %>
+        <hr>
     </body>
 </html>
