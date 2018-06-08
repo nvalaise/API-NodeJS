@@ -5,21 +5,37 @@
     </head>
 
     <body>
-        <% if (typeof error != 'undefined') { %>
+        <% if (error !== null) { %>
             <h2>/!\ <%= error %> /!\</h2>
         <% } %>
         <h1>
             Gestion des API Spotify et Deezer
         </h1>
+
+        <% if (spotify === true || deezer === true) { %>
+        <a href="/playlists">Liste des playlists</a>
+        <% } %>
         <hr>
+
         <h2>
             Spotify
         </h2>
 
-        <% if (typeof spotify == 'undefined') { %>
-            <a href="/spotify/login">Connexion</a>
-        <% } else {  %>
+        <% if (spotify === true) { %>
             <p>Connecté à Spotify</p>
+        <% } else {  %>
+            <a href="/spotify/login">Connexion</a>
+        <% } %>
+        <hr>
+
+        <h2>
+            Deezer
+        </h2>
+
+        <% if (deezer === true) { %>
+        <p>Connecté à Deezer</p>
+        <% } else {  %>
+        <a href="/deezer/login">Connexion</a>
         <% } %>
         <hr>
     </body>
