@@ -6,23 +6,24 @@ var randomstring = require("randomstring");
 var cookieParser = require('cookie-parser');
 var cors = require('cors');
 var request = require('request');
-var mongo = require('mongodb').MongoClient, dboMongo;
+
+const monk = require('monk');
+const mongoURL = 'mongo:27017/EdSound';
+const db = monk(mongoURL);
+
+db.then(function() {
+    console.log('Connected correctly to database');
+});
+
+var TrackCollection = db.get('track');
+
 var AsyncLock = require('async-lock');
 
 var lock_playlist = new AsyncLock();
 
-var mongo_url = 'mongodb://mongo:27017';
-
 var app_url = 'https://db3561f6.ngrok.io';
 
 var app = express();
-
-mongo.connect(mongo_url, function(err, db) {
-    if (err) throw err;
-
-    console.log("Database connected!");
-    db.close();
-});
 
 app.use(express.static(__dirname + '/public'))
     .use(cors())
@@ -134,13 +135,14 @@ app.get('/spotify/callback', function(req, res) {
                 spotifyApi.getMe()
                     .then(function(data) {
                         spotify_user_id = data.body.id;
+                        res.redirect('/');
                     }, function(err) {
                         console.log('Something went wrong!', err);
+                        res.redirect('/');
                     });
 
 
                 // we can also pass the token to the browser to make requests from there
-                res.redirect('/');
             } else {
 
                 res.cookie('error', 'Token invalid');
@@ -187,23 +189,57 @@ app.get('/deezer/callback', function(req, res) {
             // Options de la requête pour récupérer le token
             var deezer_access_token_url = 'https://connect.deezer.com/oauth/access_token.php?app_id='+deezer_client_id +'&secret='+deezer_client_secret+'&code='+code+'&output=json';
 
-            request
-                .get(deezer_access_token_url, function(error, response, body) {
-                    if(!error && response.statusCode === 200) {
+            request.get(deezer_access_token_url, function(error, response, body) {
+                if(!error && response.statusCode === 200) {
 
-                        deezer_user_id = JSON.parse(body).access_token;
+                    deezer_user_id = JSON.parse(body).access_token;
 
-                    } else {
-                        res.cookie('error', 'Token invalid');
-                    }
-                });
+                } else {
+                    res.cookie('error', 'Token invalid');
+                }
+                res.redirect('/');
+            });
         }
-        res.redirect('/');
     }
 });
 
-var track = null;
 
+var promiseFindTrackFromSpotifyToDeezer = function(track) {
+    return new Promise(function (resolve, reject){
+        var compar = [];
+
+        track.artists.forEach(function (elem) {
+            compar.push(elem.name);
+        });
+
+        var req = {'deezer.title': track.name, 'deezer.artist.name' : { $in: compar }};
+
+        try {
+            TrackCollection.find(req).then(function (result) {
+                resolve(result);
+            });
+        } catch (err) {
+            reject(err);
+        }
+    });
+};
+
+var promiseFindTrackFromDeezerToSpotify = function(track) {
+    return new Promise(function (resolve, reject){
+
+        var req = {'spotify.name': track.title, 'spotify.artists.name' : {$in: [track.artist.name]}};
+
+        try {
+            TrackCollection.find(req).then(function (result) {
+                resolve(result);
+            });
+        } catch (err) {
+            reject(err);
+        }
+    });
+};
+
+var count = 0;
 app.get('/playlists', function(req, res) {
     if (spotify_user_id !== undefined) {
         lock_playlist.acquire('key1', function(done) {
@@ -213,46 +249,32 @@ app.get('/playlists', function(req, res) {
 
                     spotify_playlist.forEach(function(playlist) {
 
-                        //console.log(playlist.tracks.href);
+                        spotifyApi.getPlaylistTracks(spotify_user_id, playlist.id).then(function(dataTrack) {
 
-                        spotifyApi.getPlaylistTracks(spotify_user_id, playlist.id)
-                            .then(function(dataTrack) {
-                                //console.log(dataTrack);
+                            dataTrack.body.items.forEach(function (track) {
+                                promiseFindTrackFromSpotifyToDeezer(track.track).then(function(result) {
+                                    if (result.length === 0) {
+                                        TrackCollection.findOne({'spotify.id': track.track.id}).then(function (result) {
+                                            if (result === null) {
+                                                TrackCollection.insert({"spotify": track.track}).then(function() {
+                                                    console.log("1 track inserted (Spotify)");
+                                                })
+                                            } else {
+                                                // Update
+                                                console.log("Track found in dbo (Spotify)");
+                                            }
+                                        });
+                                    } else if (result.length === 1) {
+                                        TrackCollection.update({'_id': result[0]._id}, {"spotify": track.track, "deezer": result[0]}).then(function () {
+                                            console.log("Liaison Spotify -> Deezer : found one matching track");
 
-                                dataTrack.body.items.forEach(function (track) {
-
-                                    //console.log(track.track);
-
-                                    track = track.track;
-
-                                    mongo.connect(mongo_url, function(err, db) {
-                                        if (err) {
-                                            console.log(err);
-                                        } else {
-                                            dboMongo = db.db("EdSound");
-                                            dboMongo.collection("track").find({ 'spotify.id': track.id }).toArray(function(err, result) {
-                                            });
-
-                                            dboMongo.collection("track").find({ 'spotify.id': track.id }).toArray(function(err, result) {
-                                                if (err) throw err;
-
-                                                if(result.length === 0) {
-                                                    dboMongo.collection("track").insertOne({"spotify": track}, function(err, res) {
-                                                        if (err) throw err;
-                                                        console.log("1 track inserted");
-                                                        db.close();
-                                                    });
-                                                } else {
-                                                    console.log("Track found in dbo (Spotify)");
-                                                    db.close();
-                                                }
-                                            });
-                                        }
-                                    });
+                                        });
+                                    }
                                 });
-                            }, function(err) {
-                                console.log('Something went wrong!', err);
                             });
+                        }, function(err) {
+                            console.log('Something went wrong!', err);
+                        })
                     });
 
                     done();
@@ -283,25 +305,21 @@ app.get('/playlists', function(req, res) {
                         var deezer_url_tracks = playlist.tracklist+'&access_token='+deezer_user_id;
                         request.get(deezer_url_tracks, function(errorTrack, responseTrack, bodyTrack) {
                             JSON.parse(bodyTrack).data.forEach(function (track) {
-
-                                mongo.connect(mongo_url, function(err, db) {
-                                    if (err) {
-                                        console.log(err);
-                                    } else {
-                                        dboMongo = db.db("EdSound");
-
-                                        dboMongo.collection("track").find({ 'deezer.id': track.id }).toArray(function(err, result) {
-                                            if (err) throw err;
-                                            if(result.length === 0) {
-                                                dboMongo.collection("track").insertOne({"deezer": track}, function(err, res) {
-                                                    if (err) throw err;
-                                                    console.log("1 track inserted");
-                                                    db.close();
+                                promiseFindTrackFromDeezerToSpotify(track).then(function(result) {
+                                    if (result.length === 0) {
+                                        TrackCollection.findOne({ 'deezer.id': track.id }).then(function (result) {
+                                            if (result === null) {
+                                                TrackCollection.insert({"deezer": track}).then(function() {
+                                                    console.log("1 track inserted (Deezer)");
                                                 });
                                             } else {
+                                                // Update
                                                 console.log("Track found in dbo (Deezer)");
-                                                db.close();
                                             }
+                                        });
+                                    } else if (result.length === 1) {
+                                        TrackCollection.update({'_id': result[0]._id}, {"deezer": track, "spotify": result[0]}).then(function () {
+                                            console.log("Liaison Deezer -> Spotify : found one matching track");
                                         });
                                     }
                                 });
@@ -309,7 +327,6 @@ app.get('/playlists', function(req, res) {
                         });
                     });
                 }
-
                 done();
             });
         }, function(err, ret) {}, {});
