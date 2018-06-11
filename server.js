@@ -170,7 +170,6 @@ app.get('/deezer/login', function(req, res) {
 
 app.get('/deezer/callback', function(req, res) {
 
-
     var error_reason = req.query.error_reason || null;
     var code = req.query.code || null;
     var state = req.query.state || null;
@@ -204,6 +203,110 @@ app.get('/deezer/callback', function(req, res) {
 });
 
 
+/*
+ * return \Promise
+ * ~spotify
+ * Retourne les musiques sauvegardé par l'utilisateur
+ */
+function promiseFindSpotifyPlaylists () {
+    return new Promise(function(resolve, reject) {
+        spotifyApi.getUserPlaylists(spotify_user_id).then(function(playlists) {
+            resolve(playlists);
+        },function(err) {
+            reject(err);
+        });
+    });
+}
+
+var promiseFindSpotifyPlaylistsTracks = function (playlists) {
+    return new Promise(function(resolve, reject) {
+        playlists.body.items.forEach(function(playlist) {
+
+            spotifyApi.getPlaylistTracks(spotify_user_id, playlist.id).then(function(dataTrack) {
+
+                dataTrack.body.items.forEach(function (track) {
+                    promiseFindTrackFromSpotifyToDeezer(track.track).then(function(result) {
+                        if (result.length === 0) {
+                            TrackCollection.findOne({'spotify.id': track.track.id}).then(function (result) {
+                                if (result === null) {
+                                    TrackCollection.insert({"spotify": track.track}).then(function(result) {
+                                        tabTracksId.push(result._id);
+                                        //console.log("1 track inserted (Spotify)");
+                                    })
+                                } else {
+                                    tabTracksId.push(result._id);
+                                    // Update
+                                    //console.log("Track found in dbo (Spotify)");
+                                }
+                            });
+                        } else if (result.length === 1) {
+                            TrackCollection.update({'_id': result[0]._id}, { $set : {"spotify": track.track }}).then(function () {
+                                tabTracksId.push(result[0]._id);
+                                console.log("Liaison Spotify -> Deezer : found one matching track");
+                            });
+                        }
+                    });
+
+                    countSpotify++;
+                });
+
+                if(countSpotify === dataTrack.body.items.length) {
+                    console.log("Mise à jour des données Spotify terminée");
+                    done();
+                }
+
+            }, function(err) {
+                console.log('Something went wrong!', err);
+            })
+        });
+    });
+};
+
+/*
+ * return \Promise
+ * ~spotify
+ * Retourne les musiques sauvegardé par l'utilisateur
+ */
+var promiseFindSavedTracksSpotify = function () {
+
+    var savedTracksRes = null;
+
+    return new Promise(function (resolve, reject) {
+
+        var getMySavedTracksFnct = function(offset) {
+
+            spotifyApi.getMySavedTracks({'limit' : 50, 'offset': offset}).then(function(savedTracks) {
+
+                if (offset === 0) {
+                    savedTracksRes = savedTracks;
+                } else {
+                    savedTracks.body.items.forEach(function (item) {
+                        savedTracksRes.body.items.push(item.track);
+                    });
+                }
+
+                if(offset < savedTracks.body.total)
+                    getMySavedTracksFnct(offset+50);
+                else {
+                    resolve(savedTracksRes);
+                }
+
+            }, function(err) {
+                console.log('Something went wrong!', err);
+                reject(err);
+            });
+        };
+
+        getMySavedTracksFnct(0);
+    });
+};
+
+/*
+ * return \Promise
+ * ~spotify -> ~deezer
+ * Cherche une musique deezer dans la bdd
+ * @param track SpotifyJSON
+ */
 var promiseFindTrackFromSpotifyToDeezer = function(track) {
     return new Promise(function (resolve, reject){
         var compar = [];
@@ -224,8 +327,16 @@ var promiseFindTrackFromSpotifyToDeezer = function(track) {
     });
 };
 
+/*
+ * return \Promise
+ * ~deezer -> ~spotify
+ * Cherche une musique spotify dans la bdd
+ * @param track DeezerJSON
+ */
 var promiseFindTrackFromDeezerToSpotify = function(track) {
     return new Promise(function (resolve, reject){
+
+        offsetSpotifySaved = 0;
 
         var req = {'spotify.name': track.title, 'spotify.artists.name' : {$in: [track.artist.name]}};
 
@@ -239,51 +350,109 @@ var promiseFindTrackFromDeezerToSpotify = function(track) {
     });
 };
 
-var count = 0;
+var countSpotify = 0,
+    offsetSpotifySaved = 0,
+    countDeezer = 0;
+var tabTracksId = [];
+
 app.get('/playlists', function(req, res) {
+    
     if (spotify_user_id !== undefined) {
         lock_playlist.acquire('key1', function(done) {
-            spotifyApi.getUserPlaylists(spotify_user_id)
-                .then(function(dataPlaylist) {
-                    spotify_playlist = dataPlaylist.body.items;
 
-                    spotify_playlist.forEach(function(playlist) {
+            spotifyApi.getUserPlaylists(spotify_user_id).then(function(dataPlaylist) {
 
-                        spotifyApi.getPlaylistTracks(spotify_user_id, playlist.id).then(function(dataTrack) {
+                spotify_playlist = dataPlaylist.savedTracks;
+                countSpotify = 0;
 
-                            dataTrack.body.items.forEach(function (track) {
-                                promiseFindTrackFromSpotifyToDeezer(track.track).then(function(result) {
-                                    if (result.length === 0) {
-                                        TrackCollection.findOne({'spotify.id': track.track.id}).then(function (result) {
-                                            if (result === null) {
-                                                TrackCollection.insert({"spotify": track.track}).then(function() {
-                                                    console.log("1 track inserted (Spotify)");
-                                                })
-                                            } else {
-                                                // Update
-                                                console.log("Track found in dbo (Spotify)");
-                                            }
-                                        });
-                                    } else if (result.length === 1) {
-                                        TrackCollection.update({'_id': result[0]._id}, {"spotify": track.track, "deezer": result[0]}).then(function () {
-                                            console.log("Liaison Spotify -> Deezer : found one matching track");
+                dataPlaylist.body.items.forEach(function(playlist) {
 
-                                        });
-                                    }
-                                });
+                    spotifyApi.getPlaylistTracks(spotify_user_id, playlist.id).then(function(dataTrack) {
+
+                        dataTrack.body.items.forEach(function (track) {
+                            promiseFindTrackFromSpotifyToDeezer(track.track).then(function(result) {
+                                if (result.length === 0) {
+                                    TrackCollection.findOne({'spotify.id': track.track.id}).then(function (result) {
+                                        if (result === null) {
+                                            TrackCollection.insert({"spotify": track.track}).then(function(result) {
+                                                tabTracksId.push(result._id);
+                                                //console.log("1 track inserted (Spotify)");
+                                            })
+                                        } else {
+                                            tabTracksId.push(result._id);
+                                            // Update
+                                            //console.log("Track found in dbo (Spotify)");
+                                        }
+                                    });
+                                } else if (result.length === 1) {
+                                    TrackCollection.update({'_id': result[0]._id}, { $set : {"spotify": track.track }}).then(function () {
+                                        tabTracksId.push(result[0]._id);
+                                        console.log("Liaison Spotify -> Deezer : found one matching track");
+                                    });
+                                }
                             });
-                        }, function(err) {
-                            console.log('Something went wrong!', err);
-                        })
-                    });
 
-                    done();
+                            countSpotify++;
+                        });
 
-                },function(err) {
-                    console.log('Something went wrong!', err);
-                    done();
+                        if(countSpotify === dataTrack.body.items.length) {
+                            console.log("Mise à jour des données Spotify terminée");
+                            done();
+                        }
+
+                    }, function(err) {
+                        console.log('Something went wrong!', err);
+                    })
                 });
 
+
+            },function(err) {
+                console.log('Something went wrong!', err);
+                done();
+            });
+
+        }, function(err, ret) {}, {});
+
+
+        lock_playlist.acquire('key1', function(done) {
+
+
+            promiseFindSavedTracksSpotify().then(function(tracks) {
+
+                /*tracks.body.items.forEach(function (item) {
+
+                    console.log(item);
+
+                    promiseFindTrackFromSpotifyToDeezer(item.track).then(function(result) {
+                        if (result.length === 0) {
+                            TrackCollection.findOne({'spotify.id': item.track.id}).then(function (result) {
+                                if (result === null) {
+                                    TrackCollection.insert({"spotify": item.track}).then(function(result) {
+                                        tabTracksId.push(result._id);
+                                        //console.log("1 track inserted (Spotify)");
+                                    })
+                                } else {
+                                    tabTracksId.push(result._id);
+                                    // Update
+                                    //console.log("Track found in dbo (Spotify)");
+                                }
+                            });
+                        } else if (result.length === 1) {
+                            TrackCollection.update({'_id': result[0]._id}, { $set : {"spotify": item.track }}).then(function () {
+                                tabTracksId.push(result[0]._id);
+                                console.log("Liaison Spotify -> Deezer : found one matching track");
+                            });
+                        }
+                    });
+
+                    countSpotify++;
+                });
+
+                if(countSpotify === savedTracks.body.items.length) {
+                    console.log("Mise à jour des données Spotify terminée");
+                    done();
+                }*/
+            });
         }, function(err, ret) {}, {});
 
     } else {
@@ -299,35 +468,52 @@ app.get('/playlists', function(req, res) {
 
             request.get(deezer_url_playlist, function(errorPlaylist, responsePlaylist, bodyPlaylist) {
                 if (!errorPlaylist && responsePlaylist.statusCode === 200) {
+
                     deezer_playlist = JSON.parse(bodyPlaylist);
+                    countDeezer = 0;
 
                     deezer_playlist.data.forEach(function(playlist) {
+
                         var deezer_url_tracks = playlist.tracklist+'&access_token='+deezer_user_id;
                         request.get(deezer_url_tracks, function(errorTrack, responseTrack, bodyTrack) {
+
                             JSON.parse(bodyTrack).data.forEach(function (track) {
                                 promiseFindTrackFromDeezerToSpotify(track).then(function(result) {
                                     if (result.length === 0) {
                                         TrackCollection.findOne({ 'deezer.id': track.id }).then(function (result) {
                                             if (result === null) {
-                                                TrackCollection.insert({"deezer": track}).then(function() {
-                                                    console.log("1 track inserted (Deezer)");
+                                                TrackCollection.insert({"deezer": track}).then(function(result) {
+                                                    tabTracksId.push(result._id);
+
+                                                    //console.log("1 track inserted (Deezer)");
                                                 });
                                             } else {
+                                                tabTracksId.push(result._id);
+
                                                 // Update
-                                                console.log("Track found in dbo (Deezer)");
+                                                //console.log("Track found in dbo (Deezer)");
                                             }
                                         });
                                     } else if (result.length === 1) {
-                                        TrackCollection.update({'_id': result[0]._id}, {"deezer": track, "spotify": result[0]}).then(function () {
+                                        TrackCollection.update({'_id': result[0]._id}, { $set: {"deezer": track}}).then(function () {
+                                            tabTracksId.push(result[0]._id);
+
                                             console.log("Liaison Deezer -> Spotify : found one matching track");
                                         });
                                     }
                                 });
+
                             });
+
+                            countDeezer++;
+
+                            if(countDeezer === deezer_playlist.data.length) {
+                                console.log("Mise à jour des données Deezer terminée");
+                                done();
+                            }
                         });
                     });
                 }
-                done();
             });
         }, function(err, ret) {}, {});
 
@@ -338,9 +524,26 @@ app.get('/playlists', function(req, res) {
     }
 
     lock_playlist.acquire('key1', function(done) {
-        res.json({spotify: spotify_playlist, deezer:deezer_playlist});
 
-        done();
+        try {
+            TrackCollection.distinct('_id', {'_id': {$in:tabTracksId}}).then(function (result) {
+
+                console.log("You can see your datas");
+
+                res.json(result);
+                done();
+
+            });
+        } catch (err) {
+            console.log(err);
+
+            res.setHeader('Content-Type', 'text/html');
+            res.status(500).send('Something went wrong...');
+
+            done();
+        }
+
+
     }, function(err, ret) {}, {});
 });
 
