@@ -1,3 +1,4 @@
+const bodyParser = require('body-parser');
 var express = require('express');
 var querystring = require('querystring');
 var ejs = require('ejs');
@@ -23,7 +24,9 @@ var app = express();
 
 app.use(express.static(__dirname + '/public'))
     .use(cors())
-    .use(cookieParser());
+    .use(cookieParser())
+    .use(bodyParser.urlencoded({ extended: false }));
+
 
 app.set('views', __dirname + '/views')
     .set('view engine', 'ejs');
@@ -741,6 +744,126 @@ app.get('/playlists', function(req, res) {
 
     }*/
 
+});
+
+var searchDeezer = function (type, select) {
+    return new Promise(function(resolve, reject) {
+
+        if(deezer_user_id === undefined) {
+            reject("deezer_user_id is undefined");
+        } else {
+
+            var getDeezerData = function (offset) {
+                var deezer_url_playlist = 'https://api.deezer.com/search/'+ type + '?q=' + select + '&index=' + offset;
+
+                try {
+                    request.get(deezer_url_playlist, function (err, resp, body) {
+
+                        if (resp.statusCode === 200) {
+                            var items = JSON.parse(body);
+
+                            items.data.forEach(function (obj) {
+                                if (type === 'track')
+                                    searchJSON.data.tracks.deezer.push(obj);
+                                if (type === 'artist')
+                                    searchJSON.data.artists.deezer.push(obj);
+                            });
+
+
+                            if (offset <= items.total)
+                                getDeezerData(offset+25);
+                            else
+                                resolve();
+
+                        } else {
+                            reject(err);
+                        }
+                    });
+                } catch (err) {
+                    reject(err);
+                }
+            };
+
+            getDeezerData(0);
+        }
+    });
+};
+
+
+var searchTracksSpotify = function (select) {
+    return new Promise(function(resolve, reject) {
+
+        if(spotify_user_id === undefined) {
+            reject("spotify_user_id is undefined");
+        } else {
+
+            var getSpotifyTracks = function (offset) {
+                spotifyApi.searchTracks('track:' + select, {'limit' : 50, 'offset': offset}).then(function (res) {
+                    searchJSON.data.tracks.spotify.push(res.body.tracks.items);
+
+                    if(offset <= res.body.total)
+                        getSpotifyTracks(offset+50);
+                    else {
+                        resolve();
+                    }
+                })
+            };
+
+            getSpotifyTracks(0);
+        }
+    });
+};
+
+var searchArtistsSpotify = function (select) {
+    return new Promise(function(resolve, reject) {
+
+        if(spotify_user_id === undefined) {
+            reject("spotify_user_id is undefined");
+        } else {
+            var getSpotifyArtists = function (offset) {
+                spotifyApi.searchArtists('artist:' + select, {'limit' : 50, 'offset': offset}).then(function (res) {
+                    searchJSON.data.artists.spotify.push(res.body.artists.items);
+
+                    if(offset <= res.body.total)
+                        getSpotifyArtists(offset+50);
+                    else {
+                        resolve();
+                    }
+                });
+            };
+
+            getSpotifyArtists(0);
+        }
+    });
+};
+
+var searchJSON = JSON.parse('{"data" : {"tracks" : {"spotify" : [], "deezer" : []},"artists" : {"spotify" : [], "deezer" : []}}}');
+
+
+app.post('/search', function(req, res) {
+
+    const q = req.body.q;
+
+    searchJSON = JSON.parse('{"data" : {"tracks" : {"spotify" : [], "deezer" : []},"artists" : {"spotify" : [], "deezer" : []}}}');
+
+    Promise.all([
+        searchTracksSpotify(q).catch(function (err) {
+            console.log(err);
+        }),
+        searchArtistsSpotify(q).catch(function (err) {
+            console.log(err);
+        }),
+        searchDeezer('track', 'track:"' + q +'"').catch(function (err) {
+            console.log(err);
+        }),
+        searchDeezer('artist','artist:"' + q +'"').catch(function (err) {
+            console.log(err);
+        })
+    ]).then(function() {
+        res.json(searchJSON);
+    }).catch(function (err) {
+        console.log(err);
+    });
 });
 
 

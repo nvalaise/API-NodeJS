@@ -13,7 +13,12 @@
         </h1>
 
         <% if (spotify === true || deezer === true) { %>
-        <a href="/playlists">Liste des playlists</a>
+        <hr>
+        <p><a href="/playlists">Liste des musiques</a></p>
+        <form action="/search" method="post">
+            <input type="text" name="q" placeholder="J'ai de la chance">
+            <input type="submit" value="Rechercher">
+        </form>
         <% } %>
         <hr>
 
