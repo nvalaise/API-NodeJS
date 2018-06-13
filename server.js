@@ -662,7 +662,7 @@ var promiseFindTrackFromDeezerToSpotify = function(track) {
 
 var tabTracksId;
 
-app.get('/playlists', function(req, res) {
+app.get('/tracks', function(req, res) {
 
     tabTracksId = [];
 
@@ -732,43 +732,38 @@ app.get('/playlists', function(req, res) {
 var searchDeezer = function (type, select) {
     return new Promise(function(resolve, reject) {
 
-        if(deezer_user_id === undefined) {
-            reject("deezer_user_id is undefined");
-        } else {
+        var getDeezerData = function (offset) {
+            var deezer_url_playlist = 'https://api.deezer.com/search/'+ type + '?q=' + select + '&index=' + offset;
 
-            var getDeezerData = function (offset) {
-                var deezer_url_playlist = 'https://api.deezer.com/search/'+ type + '?q=' + select + '&index=' + offset;
+            try {
+                request.get(deezer_url_playlist, function (err, resp, body) {
 
-                try {
-                    request.get(deezer_url_playlist, function (err, resp, body) {
+                    if (resp.statusCode === 200) {
+                        var items = JSON.parse(body);
 
-                        if (resp.statusCode === 200) {
-                            var items = JSON.parse(body);
-
-                            items.data.forEach(function (obj) {
-                                if (type === 'track')
-                                    searchJSON.data.tracks.deezer.push(obj);
-                                if (type === 'artist')
-                                    searchJSON.data.artists.deezer.push(obj);
-                            });
+                        items.data.forEach(function (obj) {
+                            if (type === 'track')
+                                searchJSON.data.tracks.deezer.push(obj);
+                            if (type === 'artist')
+                                searchJSON.data.artists.deezer.push(obj);
+                        });
 
 
-                            if (offset <= items.total)
-                                getDeezerData(offset+25);
-                            else
-                                console.log(items.total + " result in Deezer for query : " + type + " - " + select); resolve();
+                        if (offset <= items.total)
+                            getDeezerData(offset+25);
+                        else
+                            console.log(items.total + " result in Deezer for query : " + type + " - " + select); resolve();
 
-                        } else {
-                            reject(err);
-                        }
-                    });
-                } catch (err) {
-                    reject(err);
-                }
-            };
+                    } else {
+                        reject(err);
+                    }
+                });
+            } catch (err) {
+                reject(err);
+            }
+        };
 
-            getDeezerData(0);
-        }
+        getDeezerData(0);
     });
 };
 
